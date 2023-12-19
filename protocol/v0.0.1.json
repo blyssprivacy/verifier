@@ -1,0 +1,21 @@
+{
+  "version": "0.0.1",
+  "author": "Blyss",
+  "requirements": {
+    "application": "vllm/vllm-openai",
+    "ui": "blintzbase/chatui",
+    "shim": "blintzbase/shim",
+    "firmware": {
+      "name": "6.5.0-rc2-snp-guest-ad9c0bf475ec",
+      "disk": {
+        "type": "dm_verity",
+        "hash": "c51b4b94ee613a768cf555442582b9bcf6e8b04aacd26ff52cd69f87809b8190",
+        "size": 535741399040
+      },
+      "ovmf": "db5f9f3b01fab5eeba81a676490034e5585ac9637fa34f752f8d05f222a11ca3",
+      "kernel": "ff5e53ccc981594fbbdf6433011ef18227aa981ee85680af5e5f21ff23ae67dc",
+      "initrd": "5e15926b19a1ee3d9d5182438286b74f5060829b1ba8f560bf0a748d6510e611"
+    },
+    "security": "systemd.mask=ssh.service"
+  } 
+}

@@ -1,0 +1,2 @@
+sev-snp-measure==0.0.7
+sev_attest_tool==0.2.1

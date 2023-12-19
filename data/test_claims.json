@@ -1,0 +1,7 @@
+{
+  "application": "--env HUGGING_FACE_HUB_TOKEN=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 vllm/vllm-openai@sha256:d4b96484ebd0d81742f0db734db6b0e68c44e252d092187935216e0b212afc24 --model mistralai/Mistral-7B-Instruct-v0.1",
+  "ui": "--env DEFAULT_MODEL=mistralai/Mistral-7B-Instruct-v0.1 --env OPENAI_API_HOST=https://enclave.blyss.dev --env NODE_TLS_REJECT_UNAUTHORIZED=0 blintzbase/chatui@sha256:19d393c7642e1e84be209139ed5459444e2e7a474eeb78e3cc16b30d36ac1cce",  
+  "shim": "blintzbase/shim@sha256:f3716260a4ee595ff497ef12c183f58378cf85be0208b9c568062f2b092d4fb7",
+  "disk": "fsck.mode=skip ro console=ttyS0 overlayroot=tmpfs root=/dev/dm-0 rootflags=noload dm-mod.create=\"dmverity,,0,ro,0 1046369920 verity 1 /dev/sda2 /dev/sdb 4096 4096 130796240 1 sha256 c51b4b94ee613a768cf555442582b9bcf6e8b04aacd26ff52cd69f87809b8190 0000000000000000000000000000000000000000000000000000000000000000 1 panic_on_corruption\"",
+  "security": "systemd.mask=ssh.service blyss_disable_server blyss_use_test_cert"
+}
