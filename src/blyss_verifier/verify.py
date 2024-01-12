@@ -31,7 +31,7 @@ ATTESTATION_PATH = "/.well-known/appspecific/dev.blyss.enclave/attestation.json"
 
 DEFAULT_PROTOCOL = "v0.0.1"
 
-ovmf_file_path_prefix = str(resources.files("data") / "OVMF_")
+ovmf_file_path_prefix = str(resources.files("blyss_verifier") / "data" / "OVMF_")
 
 
 def parse_kernel_cli_parameters(cli_string):
@@ -96,7 +96,8 @@ def verify_inclusion_in_transparency_log(url: str, cert_fingerprint: str):
 
     # NB: silences debug output from the ctutlz library
     with redirect_stdout(None):
-        handshake_res = do_handshake(url)
+        # SCTs are in the certificate, not the TLS handshake
+        handshake_res = do_handshake(url, scts_tls=False, scts_ocsp=False)
 
     ee_cert = handshake_res.ee_cert
     ee_cert_fingerprint = (
@@ -105,7 +106,7 @@ def verify_inclusion_in_transparency_log(url: str, cert_fingerprint: str):
     assert (
         ee_cert_fingerprint == cert_fingerprint
     ), "Server presented a different certificate than the one attested"
-    print("✅ Certificate fingerprint matches attestation")
+    print("✅ Certificate fingerprint matches attestation\n")
 
     verifications = verify_scts_by_cert(handshake_res, ctlogs)
 
@@ -124,7 +125,9 @@ def verify_inclusion_in_transparency_log(url: str, cert_fingerprint: str):
 
 def get_protocl_reqs(protocol):
     protocol_spec = None
-    protocol_spec_path = str(resources.files("protocol") / protocol) + ".json"
+    protocol_spec_path = (
+        str(resources.files("blyss_verifier") / "protocol" / protocol) + ".json"
+    )
     with open(protocol_spec_path, "r") as f:
         protocol_spec = json.load(f)
     reqs = protocol_spec["requirements"]
@@ -351,7 +354,7 @@ def main():
     if not args.attestation:
         assert args.url, "Must specify (claims.json + attestation.json) or url"
         attestation = requests.get(args.url + ATTESTATION_PATH).json()
-        print("Verifying claims for", args.url)
+        print(f"Verifying claims for {args.url}:")
     else:
         with open(args.attestation, "r") as f:
             attestation = json.load(f)

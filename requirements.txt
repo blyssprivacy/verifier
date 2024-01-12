@@ -1,4 +1,4 @@
 sev-snp-measure==0.0.7
-sev_attest_tool==0.2.1
+sev_attest_tool==0.2.4
 ctutlz==0.9.8
 pyOpenSSL==23.3.0

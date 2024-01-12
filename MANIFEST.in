@@ -1,0 +1,4 @@
+include src/blyss_verifier/data/*.txt
+include src/blyss_verifier/data/*.json
+include src/blyss_verifier/data/*.fd
+include src/blyss_verifier/protocol/*.json

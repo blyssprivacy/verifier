@@ -33,7 +33,7 @@ verify_url("https://enclave.blyss.dev")
 
 A typical run of the script will produce output like this:
 ```
-Verifying claims for https://enclave.blyss.dev
+Verifying claims for https://enclave.blyss.dev:
 ✅ Attestation is signed by root AMD certificate at:
    https://kdsintf.amd.com/vcek/v1/Genoa/cert_chain (e6ecc853…d777aca3)
 
@@ -51,6 +51,7 @@ Verifying claims for https://enclave.blyss.dev
    1ee2a500…3704131a == 1ee2a500…3704131a
 
 ✅ Certificate fingerprint matches attestation
+
 ✅ Included in at least two transparency logs:
    - Let's Encrypt 'Oak2024H1' log
    - Google 'Argon2024' log
@@ -81,7 +82,11 @@ and AMD SEV-SNP secure VM.
 
 The kernel command-line, which is attested, specifies the Docker images
 that the VM to launch at boot. Here, we check that these images are the ones 
-we expect.
+we expect:
+- `application`: Runs LLM's, and contains the model and the hash of the model weights.
+- `ui`: Serves the web chat UI.
+- `shim`: Verifies GPU attestation, requests
+certficiates from Let's Encrypt, and proxies requests to the application.
 
 ```
 ✅ Disk is checked by dm-verity against the expected hash

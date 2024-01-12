@@ -1,7 +1,29 @@
 [project]
 name = "blyss-verifier"
-requires-python = ">=3.8"
-version = "0.1.0"
+requires-python = ">=3.9"
+version = "0.1.8"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+authors = [
+  { name="Samir Menon", email="samir@blyss.dev" },
+  { name="Neil Movva", email="neil@blyss.dev" }
+]
+description = "A verifier for the Blyss Confidential AI service"
+readme = "README.md"
+dynamic = ["dependencies"]
+
+[tool.setuptools.dynamic]
+dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools]
-py-modules = ["blyss_verifier"]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[project.urls]
+Homepage = "https://github.com/blyssprivacy/verifier"
+
