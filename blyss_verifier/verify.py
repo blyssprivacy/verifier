@@ -4,6 +4,8 @@ from importlib import resources
 import base64
 import shlex
 import hashlib
+from contextlib import redirect_stdout
+import OpenSSL.crypto
 
 import requests
 
@@ -18,6 +20,12 @@ from sevsnpmeasure.vmsa import VMSA
 from sevsnpmeasure.sev_mode import SevMode
 from sevsnpmeasure.vmm_types import VMMType
 from sevsnpmeasure.guest import snp_update_metadata_pages
+
+from ctutlz.ctlog import download_log_list, Logs, set_operator_names
+from ctutlz.scripts.verify_scts import verify_scts_by_cert
+from ctutlz.tls.handshake import do_handshake
+
+DEFAULT_URL = "https://enclave.blyss.dev"
 
 ATTESTATION_PATH = "/.well-known/appspecific/dev.blyss.enclave/attestation.json"
 
@@ -53,11 +61,6 @@ def snp_calc_launch_digest(
     """
     Calculate the launch digest for a SEV-SNP guest.
     """
-    # assert (
-    #     append_str
-    #     == 'blyss_disable_server blyss_use_test_cert fsck.mode=skip ro console=ttyS0 overlayroot=tmpfs root=/dev/dm-0 rootflags=noload dm-mod.create="dmverity,,0,ro,0 1046369920 verity 1 /dev/sda2 /dev/sdb 4096 4096 130796240 1 sha256 c51b4b94ee613a768cf555442582b9bcf6e8b04aacd26ff52cd69f87809b8190 0000000000000000000000000000000000000000000000000000000000000000 1 panic_on_corruption" blyss_shim_docker_img="blintzbase/shim@sha256:6652a8cc8a752eb9bc2d076daa6c346ca156c7b5bfbcf7c5021c9fd7bbc238bf" blyss_ui_docker_img="--env DEFAULT_MODEL=mistralai/Mistral-7B-Instruct-v0.1 --env OPENAI_API_HOST=https://enclave.blyss.dev --env NODE_TLS_REJECT_UNAUTHORIZED=0 blintzbase/chatui@sha256:404c2bfefca0b086c064c16fcb33a3262ca9a87e0b0d541b3fb48d62c772a3d8" blyss_docker_img="--env HUGGING_FACE_HUB_TOKEN=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 vllm/vllm-openai@sha256:d4b96484ebd0d81742f0db734db6b0e68c44e252d092187935216e0b212afc24 --model mistralai/Mistral-7B-Instruct-v0.1 "'
-    # )
-    print(json.dumps(append_str))
 
     gctx = GCTX()
     ovmf = OVMF(ovmf_file)
@@ -83,8 +86,40 @@ def snp_calc_launch_digest(
     return gctx.ld()
 
 
-def verify_inclusion_in_transparency_log(url, cert_fingerprint):
-    pass
+def verify_inclusion_in_transparency_log(url: str, cert_fingerprint: str):
+    logs_dict = download_log_list()
+    set_operator_names(logs_dict)
+    ctlogs = Logs([logs_dict])
+
+    if url.startswith("https://"):
+        url = url[len("https://") :]
+
+    # NB: silences debug output from the ctutlz library
+    with redirect_stdout(None):
+        handshake_res = do_handshake(url)
+
+    ee_cert = handshake_res.ee_cert
+    ee_cert_fingerprint = (
+        ee_cert.pyopenssl.digest("sha256").decode().lower().replace(":", "")
+    )
+    assert (
+        ee_cert_fingerprint == cert_fingerprint
+    ), "Server presented a different certificate than the one attested"
+    print("✅ Certificate fingerprint matches attestation")
+
+    verifications = verify_scts_by_cert(handshake_res, ctlogs)
+
+    for ver in verifications:
+        assert ver.verified, "Certificate not verified by transparency log"
+
+    assert (
+        len(verifications) >= 2
+    ), "Certificate not verified by at least two transparency logs"
+    print("✅ Included in at least two transparency logs:")
+
+    for ver in verifications:
+        print(f"   - {ver.log.description}")
+    print()
 
 
 def get_protocl_reqs(protocol):
@@ -101,9 +136,7 @@ def has_docker_image(docker_run_cli, expected_image):
     i = 0
     while i < len(docker_run_args):
         arg = docker_run_args[i]
-        print(i, arg)
         if arg == "--env":
-            print("Skipping env")
             i += 2
             continue
         i += 1
@@ -124,24 +157,37 @@ def has_docker_image(docker_run_cli, expected_image):
     raise ValueError("Docker image not found in kernel command line 2")
 
 
-def complies_with_protocol(kernel_cli, protocol):
+def complies_with_protocol(kernel_cli, protocol, verbose=False):
     kernel_cli_params = parse_kernel_cli_parameters(kernel_cli)
     reqs = get_protocl_reqs(protocol)
+
+    if verbose:
+        print("Checking compliance with protocol version ", protocol)
 
     # Application
     if "application" in reqs:
         assert "blyss_docker_img" in kernel_cli_params
         has_docker_image(kernel_cli_params["blyss_docker_img"], reqs["application"])
+        if verbose:
+            print("Got application docker image: ", reqs["application"])
 
     # UI
     if "ui" in reqs:
         assert "blyss_ui_docker_img" in kernel_cli_params
         has_docker_image(kernel_cli_params["blyss_ui_docker_img"], reqs["ui"])
+        if verbose:
+            print("Got UI docker image: ", reqs["ui"])
 
     # Shim
     if "shim" in reqs:
         assert "blyss_shim_docker_img" in kernel_cli_params
         has_docker_image(kernel_cli_params["blyss_shim_docker_img"], reqs["shim"])
+        if verbose:
+            print("Got shim docker image: ", reqs["shim"])
+    print("✅ Docker images match expected values:")
+    print(f'   - Application: {reqs["application"]}')
+    print(f'   - UI: {reqs["ui"]}')
+    print(f'   - Shim: {reqs["shim"]}\n')
 
     # Disk
     assert "firmware" in reqs
@@ -151,9 +197,14 @@ def complies_with_protocol(kernel_cli, protocol):
     disk_blocks = disk_bytes // 4096
     disk_sectors = disk_bytes // 512
     disk_check_seq = f'fsck.mode=skip ro console=ttyS0 overlayroot=tmpfs root=/dev/dm-0 rootflags=noload dm-mod.create="dmverity,,0,ro,0 {disk_sectors} verity 1 /dev/sda2 /dev/sdb 4096 4096 {disk_blocks} 1 sha256 {disk_hash} 0000000000000000000000000000000000000000000000000000000000000000 1 panic_on_corruption"'
-    print("kernel_cli", kernel_cli)
-    print("disk_check_seq", disk_check_seq)
+    if verbose:
+        print("kernel_cli", kernel_cli)
+        print("disk_check_seq", disk_check_seq)
     assert disk_check_seq in kernel_cli, "Firmware does not match expected"
+    print("✅ Disk is checked by dm-verity against the expected hash")
+    print(
+        f'   dm-mod.create="dmverity,,0,ro,0 …{disk_hash[:8]}…{disk_hash[-8:]}… 1 panic_on_corruption"\n'
+    )
 
     # Security
     assert "security" in reqs
@@ -170,7 +221,6 @@ def complies_with_protocol(kernel_cli, protocol):
         "blyss_docker_img=" + quote(kernel_cli_params["blyss_docker_img"]),
     ]
     reconstructed_kernel_cli = " ".join(reconstructed_kernel_cli_params)
-    print("reconstructed_kernel_cli", json.dumps(reconstructed_kernel_cli))
     assert (
         reconstructed_kernel_cli == kernel_cli
     ), "Kernel command line does not match reconstruction, extraneous parameters found"
@@ -178,7 +228,7 @@ def complies_with_protocol(kernel_cli, protocol):
     return True
 
 
-def verify_claims(claims, attestation, protocol="v0.0.1", url=None):
+def verify_claims(claims, attestation, protocol="v0.0.1", url=None, verbose=False):
     reqs = get_protocl_reqs(protocol)
 
     # 1. Verify the attestation report
@@ -187,6 +237,14 @@ def verify_claims(claims, attestation, protocol="v0.0.1", url=None):
     sev_attest_tool.verify_attestation_report(
         json.dumps(attestation["cpu_attestation"]), vcek_bytes
     )
+    root_cert_url = "https://kdsintf.amd.com/vcek/v1/Genoa/cert_chain"
+    root_cert_pem = requests.get(root_cert_url).content
+    root_cert = OpenSSL.crypto.load_certificate(
+        OpenSSL.crypto.FILETYPE_PEM, root_cert_pem
+    )
+    root_cert_hash = hashlib.sha256(root_cert_pem).hexdigest()
+    print(f"✅ Attestation is signed by root AMD certificate at:")
+    print(f"   {root_cert_url} ({root_cert_hash[:8]}…{root_cert_hash[-8:]})\n")
 
     # 2. Assemble the kernel command line
     expected_kernel_cli = None
@@ -203,30 +261,33 @@ def verify_claims(claims, attestation, protocol="v0.0.1", url=None):
             ]
         )
     else:
-        print("No kernel command line found in input claims.")
-        print("Proceeding with attestation-supplied kernel command line.")
-
         expected_kernel_cli = attestation["cpu_attestation"]["launch"]["kernel_cli"]
 
     # Remove the initrd=initrd parameter if it exists
     if "initrd=initrd" in expected_kernel_cli:
         expected_kernel_cli = expected_kernel_cli.replace(" initrd=initrd", "")
 
+    if verbose:
+        print("Got kernel command line: ", repr(expected_kernel_cli))
+
     # Verify that the kernel command line complies with the protocol requirements
-    if not complies_with_protocol(expected_kernel_cli, protocol):
+    if not complies_with_protocol(expected_kernel_cli, protocol, verbose=verbose):
         raise ValueError(
             f"Kernel command line does not comply with protocol {protocol}"
         )
+    print(f"✅ Attested kernel command line complies with protocol version {protocol}\n")
 
     # 3. Verify the OVMF file
     ovmf_file_path = ovmf_file_path_prefix + protocol + ".fd"
     if "-test" in protocol:
         ovmf_file_path = ovmf_file_path_prefix + (protocol.split("-")[0]) + ".fd"
+    ovmf_hash = None
     with open(ovmf_file_path, "rb") as f:
         ovmf_file = f.read()
         expected_ovmf_file_hash = reqs["firmware"]["ovmf"]
+        ovmf_hash = hashlib.sha256(ovmf_file).hexdigest()
         assert (
-            hashlib.sha256(ovmf_file).hexdigest() == expected_ovmf_file_hash
+            ovmf_hash == expected_ovmf_file_hash
         ), "OVMF file hash does not match expected"
 
     # 4. Calculate the launch digest
@@ -237,34 +298,48 @@ def verify_claims(claims, attestation, protocol="v0.0.1", url=None):
         initrd_hash=reqs["firmware"]["initrd"],
         ovmf_file=ovmf_file_path,
     )
+    if verbose:
+        print("Got # of vCPUS:", attestation["cpu_attestation"]["launch"]["num_vcpus"])
+        print("Got kernel hash: ", reqs["firmware"]["kernel"])
+        print("Got initrd hash: ", reqs["firmware"]["initrd"])
+        print("Got OVMF hash: ", ovmf_hash)
 
     # 5. Check that the launch digest matches the attestation report
-    print("Expecting launch digest: ", expected_launch_digest.hex())
-    print(
-        "      Got launch digest: ",
-        bytes(attestation["cpu_attestation"]["measurement"]).hex(),
-    )
+    if verbose:
+        print("Expecting launch digest: ", expected_launch_digest.hex())
+        print(
+            "      Got launch digest: ",
+            bytes(attestation["cpu_attestation"]["measurement"]).hex(),
+        )
     assert (
         list(expected_launch_digest) == attestation["cpu_attestation"]["measurement"]
     ), "Launch digest does not match attestation report"
+    print("✅ Attested measurement matches expected measurement")
+    gold = expected_launch_digest.hex()
+    gues = bytes(attestation["cpu_attestation"]["measurement"]).hex()
+    print(f"   {gold[:8]}…{gold[-8:]} == {gues[:8]}…{gues[-8:]}\n")
 
     # 6. Check that this certificate is in the transparency log
     if url:
         attested_cert_fingerprint = bytes(
             attestation["cpu_attestation"]["report_data"]
         )[:32].hex()
-        print(
-            "Checking inclusion in transparency log of cert with fingerprint:",
-            attested_cert_fingerprint,
-        )
+        if verbose:
+            print(
+                "Checking inclusion in transparency log of cert with fingerprint:",
+                attested_cert_fingerprint,
+            )
         verify_inclusion_in_transparency_log(url, attested_cert_fingerprint)
+
+    print("✅ PASS")
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument("url")
+    parser.add_argument("url", type=str, default=DEFAULT_URL, nargs="?")
     parser.add_argument("--attestation", type=str, default=None)
     parser.add_argument("--protocol", type=str, default=DEFAULT_PROTOCOL)
+    parser.add_argument("-v", "--verbose", action="store_true")
     args = parser.parse_args()
     return args
 
@@ -272,17 +347,21 @@ def parse_args():
 def main():
     args = parse_args()
 
-    # attestation = requests.get(args.url + ATTESTATION_PATH).json()
-
     attestation = None
-    # if not args.attestation:
-    # assert args.url, "Must specify (claims + attestation) or url"
-    # claims = attestation["claims"]
-    # else:
-    with open(args.attestation, "r") as f:
-        attestation = json.load(f)
+    if not args.attestation:
+        assert args.url, "Must specify (claims.json + attestation.json) or url"
+        attestation = requests.get(args.url + ATTESTATION_PATH).json()
+        print("Verifying claims for", args.url)
+    else:
+        with open(args.attestation, "r") as f:
+            attestation = json.load(f)
 
-    verify_claims({}, attestation, args.protocol, url=args.url)
+    verify_claims({}, attestation, args.protocol, url=args.url, verbose=args.verbose)
+
+
+def verify_url(url, verbose=False):
+    attestation = requests.get(url + ATTESTATION_PATH).json()
+    verify_claims({}, attestation, DEFAULT_PROTOCOL, url=url, verbose=verbose)
 
 
 # example:

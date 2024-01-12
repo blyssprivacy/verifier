@@ -1,38 +1,129 @@
-# Verifier
-This repository contains code that verifies the confidentiality claims of 
-the Blyss confidential AI service at [enclave.blyss.dev](https://enclave.blyss.dev). For more details, see [this technical deep-dive](https://blog.blyss.dev/confidential-ai-from-gpu-enclaves/).
+`blyss_verifier` is a Python package that verifies the confidentiality claims of the Blyss confidential AI service at [enclave.blyss.dev](https://enclave.blyss.dev). For more details, see [this technical deep-dive](https://blog.blyss.dev/confidential-ai-from-gpu-enclaves/).
 
-## Running
-A confidentiality claim consists of several claimed code blobs:
-- `application`: The Docker image hash and arguments to run the application, 
-containing the model and the hash of the model weights.
-- `ui`: The Docker image hash and arguments to serve the web chat UI,
-hosted at [enclave.blyss.dev](https://enclave.blyss.dev).
-- `shim`: The Docker image hash and arguments to run the shim, 
-which contains the code that verifies GPU attestation, requests
-certficiates from Let's Encrypt, and proxies requests to the application.
-- `disk`: The disk image of the enclave, containing a minimal OS 
-containing Docker and the NVIDIA Container Toolkit.
-- `security`: Kernel command-line parameters that ensure security.
+## Usage
 
-The claims can be represented as a JSON file, `claims.json`, which is
-available at [enclave.blyss.dev/claims.json](https://enclave.blyss.dev/claims.json):
-```json
-{
-  "application": "--env HUGGING_FACE_HUB_TOKEN=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 vllm/vllm-openai@sha256:d4b96484ebd0d81742f0db734db6b0e68c44e252d092187935216e0b212afc24 --model mistralai/Mistral-7B-Instruct-v0.1",
-  "ui": "--env DEFAULT_MODEL=mistralai/Mistral-7B-Instruct-v0.1 --env OPENAI_API_HOST=https://enclave.blyss.dev --env NODE_TLS_REJECT_UNAUTHORIZED=0 blintzbase/chatui@sha256:19d393c7642e1e84be209139ed5459444e2e7a474eeb78e3cc16b30d36ac1cce",  
-  "shim": "blintzbase/shim@sha256:f3716260a4ee595ff497ef12c183f58378cf85be0208b9c568062f2b092d4fb7",
-  "disk": "fsck.mode=skip ro console=ttyS0 overlayroot=tmpfs root=/dev/dm-0 rootflags=noload dm-mod.create=\"dmverity,,0,ro,0 1046369920 verity 1 /dev/sda2 /dev/sdb 4096 4096 130796240 1 sha256 c51b4b94ee613a768cf555442582b9bcf6e8b04aacd26ff52cd69f87809b8190 0000000000000000000000000000000000000000000000000000000000000000 1 panic_on_corruption\"",
-  "security": "systemd.mask=ssh.service"
-}
-```
+Install with:
 
-To verify a given set of claims against an attestation file, run:
 ```bash
-python verify.py --claims claims.json --attestation attestation.json
+pip install --upgrade blyss-verifier
 ```
 
-To check a live site, and print the verified claims, run:
+Verify the confidentiality claims of `enclave.blyss.dev` in a single command:
+
 ```bash
-python verify.py https://enclave.blyss.dev
+python -m blyss_verifier.verify
 ```
+
+The verbose output (enabled with `-v`) includes more details on 
+what images and hashes were computed and checked.
+You can check a different URL by supplying it at the command line with:
+
+```bash
+python -m blyss_verifier.verify https://example.com
+```
+
+You can also use the library from within a Python script:
+
+```py
+from blyss_verifier.verify import verify_url
+verify_url("https://enclave.blyss.dev")
+```
+
+## Example run
+
+A typical run of the script will produce output like this:
+```
+Verifying claims for https://enclave.blyss.dev
+✅ Attestation is signed by root AMD certificate at:
+   https://kdsintf.amd.com/vcek/v1/Genoa/cert_chain (e6ecc853…d777aca3)
+
+✅ Docker images match expected values:
+   - Application: vllm/vllm-openai
+   - UI: blintzbase/chatui
+   - Shim: blintzbase/shim
+
+✅ Disk is checked by dm-verity against the expected hash
+   dm-mod.create="dmverity,,0,ro,0 …c51b4b94…809b8190… 1 panic_on_corruption"
+
+✅ Attested kernel command line complies with protocol version v0.0.1
+
+✅ Attested measurement matches expected measurement
+   1ee2a500…3704131a == 1ee2a500…3704131a
+
+✅ Certificate fingerprint matches attestation
+✅ Included in at least two transparency logs:
+   - Let's Encrypt 'Oak2024H1' log
+   - Google 'Argon2024' log
+
+✅ PASS
+```
+
+Let's break down what is happening in each step. 
+For more details, please read [our technical deep-dive](https://blog.blyss.dev/confidential-ai-from-gpu-enclaves/).
+
+```
+✅ Attestation is signed by root AMD certificate at:
+   https://kdsintf.amd.com/vcek/v1/Genoa/cert_chain (e6ecc853…d777aca3)
+```
+
+First, we check that the attestation presented by the service,
+at `https://enclave.blyss.dev/.well-known/appspecific/dev.blyss.enclave/attestation.json`,
+is correctly signed by a chain of certificates leading to the root AMD certificate.
+This ensures we are running genuine AMD secure hardware, and that all code is running inside
+and AMD SEV-SNP secure VM.
+
+```
+✅ Docker images match expected values:
+   - Application: vllm/vllm-openai
+   - UI: blintzbase/chatui
+   - Shim: blintzbase/shim
+```
+
+The kernel command-line, which is attested, specifies the Docker images
+that the VM to launch at boot. Here, we check that these images are the ones 
+we expect.
+
+```
+✅ Disk is checked by dm-verity against the expected hash
+   dm-mod.create="dmverity,,0,ro,0 …c51b4b94…809b8190… 1 panic_on_corruption"
+```
+
+The disk is hashed using dm-verity at boot, a Linux kernel module, and checked against a preset hash.
+The image contains a minimal Ubuntu installation supporting Docker and the NVIDIA Container Toolkit.
+
+```
+✅ Attested kernel command line complies with protocol version v0.0.1
+```
+
+A *protocol* specifes the set of disk hashes, Docker images and launch arguments,
+and firmware, initrd, and kernel hashes, that a client and server agree are valid for confidentiality to hold.
+We outline `v0.0.1` of the protocol in `protocol/v0.0.1.json`, and leave future versions to be specified through
+between end users, service providers, and security researchers.
+
+```
+✅ Attested measurement matches expected measurement
+   1ee2a500…3704131a == 1ee2a500…3704131a
+```
+
+```
+✅ Certificate fingerprint matches attestation
+```
+
+The verifier checks that the TLS certificate presented by the server matches 
+the one specified by the signed attestation report.
+
+```
+✅ Included in at least two transparency logs:
+   - Let's Encrypt 'Oak2024H1' log
+   - Google 'Argon2024' log
+```
+The verifier checks that the certificate issued by Let's Encrypt was properly included in Certificate Transparency logs, 
+and a permanent record of its issuance is committed to the log.
+
+```
+✅ PASS
+```
+Finally, once verification passes, clients can be sure that:
+- The server's private key, used to establish all TLS connections to it, was generated on boot from inside the secure VM, and is inaccessible to Blyss or any other third party.
+- The server's GPU was in confidential computing mode, and all data transfers over PCIe were encrypted using keys known only to the secure VM and the GPU's secure hardware.
+- The contents of any interaction with the API are inaccessible to Blyss or any other third party.
