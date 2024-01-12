@@ -110,6 +110,11 @@ between end users, service providers, and security researchers.
    1ee2a500…3704131a == 1ee2a500…3704131a
 ```
 
+The measurement is the hash of all code in the VM at launch time. 
+The verifier calculates an expected measurement from the setting of the prior parameters
+(kernel, OS, Docker images, etc), and then 
+verifies that it matches the launch measurement in the attestation report.
+
 ```
 ✅ Certificate fingerprint matches attestation
 ```
