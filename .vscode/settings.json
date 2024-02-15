@@ -1,0 +1,6 @@
+{
+    "rust-analyzer.linkedProjects": [
+        "./verifier-rs/Cargo.toml"
+    ],
+    "python.analysis.typeCheckingMode": "basic"
+}
