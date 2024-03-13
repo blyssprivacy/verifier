@@ -5,42 +5,15 @@ use ring;
 use serde::Deserialize;
 use serde_json;
 use sev::{certs::snp::Certificate, firmware::guest::AttestationReport};
-use shlex;
+
+mod protocol;
+mod sevtool;
 
 #[derive(Debug, Deserialize)]
 struct AugementedReport {
     #[serde(flatten)]
     report: AttestationReport,
     vcek: String,
-}
-
-struct AttestedComponents {
-    shim: Option<String>,
-    application: Option<String>,
-    ui: Option<String>,
-}
-
-mod sevtool;
-
-fn parse_commandline(kernel_cli: String) -> AttestedComponents {
-    let mut components = AttestedComponents {
-        shim: None,
-        application: None,
-        ui: None,
-    };
-
-    let cli_args = shlex::split(&kernel_cli).unwrap();
-    for arg in cli_args {
-        if arg.starts_with("shim=") {
-            components.shim = Some(arg.split('=').collect());
-        } else if arg.starts_with("application=") {
-            components.application = Some(arg.split('=').collect());
-        } else if arg.starts_with("ui=") {
-            components.ui = Some(arg.split('=').collect());
-        }
-    }
-
-    components
 }
 
 fn verify(attestation_document: String, protocol_document: String) {
@@ -75,7 +48,18 @@ fn verify(attestation_document: String, protocol_document: String) {
     // B: Check CPU-signed measurement against protocol expected measurement
     // 1. Parse the protocol document
     let protocol_json: serde_json::Value = serde_json::from_str(&protocol_document).unwrap();
-    let expected_measurement_base64 = protocol_json["expected_measurement"].clone().to_string();
+    let expected_measurement_base64: String = serde_json::from_value(
+        protocol_json
+            .get("requirements")
+            .and_then(|r| r.get("measurement"))
+            .unwrap()
+            .clone(),
+    )
+    .unwrap();
+    println!(
+        "expected_measurement_base64: {}",
+        expected_measurement_base64
+    );
     let expected_measurement = base64::decode(&expected_measurement_base64).unwrap();
 
     let mut expected_measurement_bytes: [u8; 48] = [0; 48];
@@ -92,20 +76,37 @@ fn verify(attestation_document: String, protocol_document: String) {
     }
 }
 
+use clap::Parser;
+
+/// Standalone verifier for a Blyss-protocol attestation document.
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+    /// domain name of the server to verify
+    #[arg(short, long)]
+    domain: String,
+
+    /// file path to an attestation document, which we'll expect the server to match
+    #[arg(short, long, default_value = None)]
+    protocol_path: Option<String>,
+}
+
 fn main() {
-    let attestation_host = "https://enclave.blyss.dev";
-    let attestation_path = "/.well-known/appspecific/dev.blyss.enclave/attestation.json";
-    let attestation_url = attestation_host.to_string() + attestation_path;
-    let attestation_document = requests::get(&attestation_url).unwrap().text().unwrap();
+    let args = Args::parse();
 
-    let protocol_host = "https://cdn.jsdelivr.net/gh/blyssprivacy/verifier/protocols/";
-    let protocol_version = "0.0.2";
-    let protocol_url = protocol_host.to_string() + "v" + protocol_version + ".json";
-    let response = requests::get(&protocol_url).expect("Failed to fetch protocol document");
-    if !response.status().is_success() {
-        panic!("Failed to fetch protocol document at {}", protocol_url);
+    const ATTESTATION_PATH: &str = "/.well-known/appspecific/dev.blyss.enclave/attestation.json";
+    let attestation_document = requests::get(args.domain + ATTESTATION_PATH)
+        .unwrap()
+        .text()
+        .unwrap();
+
+    let protocol_document;
+    if let Some(path) = args.protocol_path {
+        protocol_document = std::fs::read_to_string(path).unwrap();
+    } else {
+        let protocol_version = "0.0.2";
+        protocol_document = protocol::get_online_protocol(protocol_version);
     }
-    let protocol_document = response.text().expect("Failed to read response text");
 
-    verify(attestation_url, protocol_document);
+    verify(attestation_document, protocol_document);
 }

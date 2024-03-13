@@ -44,6 +44,6 @@
       },
       "security": "systemd.mask=ssh.service"
     },
-    "expected_measurement": "1ee2a500b58a0c6935b29d0c7cc64cbdf25100a75b574163b8cf8a24bb4aa0a566bfa34a75610f2c7927d2353704131a"
+    "measurement": "1ee2a500b58a0c6935b29d0c7cc64cbdf25100a75b574163b8cf8a24bb4aa0a566bfa34a75610f2c7927d2353704131a"
   }
 }
